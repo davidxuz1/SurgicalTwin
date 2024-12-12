@@ -137,18 +137,6 @@ cmake --build build --config RelWithDebInfo -j
 pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
-#### 4. YOLO Setup
-
-To train your own YOLO model, you need:
-- A `data.yaml` file
-- The following folder structure:
-  - `train/images`
-  - `valid/images`
-  - `test/images`
-
-**Dataset Example (Yolov11):**
-https://universe.roboflow.com/laparoscopic-yolo/laparoscopy/dataset/14
-
 ## How to Use
 
 To use the Surgical Twin Pipeline, navigate to the `src` directory and run the `main.py` script with the appropriate arguments:
@@ -295,4 +283,3 @@ Several utility tools are available in the `tools` directory to assist with vari
   - Output: Processed video with bounding boxes in `data/tools_output/yolo_output`.
 
 
----
