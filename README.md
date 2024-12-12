@@ -9,7 +9,7 @@ git clone
 cd SurgicalTwin
 ```
 
-### Folder Setup
+### 🗂️ Folder Setup
 
 Within the `SurgicalTwin` directory, set up the following folder structure:
 
@@ -51,7 +51,7 @@ conda activate surgical_twin
 conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
 ```
 
-### Required Manual Installations
+### 🔧 Required Manual Installations
 
 #### 1. SAM2 Installation
 
@@ -102,25 +102,30 @@ Download the model from [this link](https://huggingface.co/depth-anything/Depth-
 #### 5. SurgicalGaussian Installation
 
 ```bash
+cd third_party
 git clone https://github.com/xwx0924/SurgicalGaussian
 ```
-
-Substitute submodules:
-Replace `submodules/diff-gaussian-rasterization` with the following repository:
-https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth
 
 Then:
 
 ```bash
-cd SurgicalGaussian
-pip install -e submodules/simple-knn
-cd submodules/diff-gaussian-rasterization-w-depth
-python setup.py install
+cd third_party
+cd SurgicalGaussian/submodules
+git clone https://github.com/camenduru/simple-knn 
+cd simple-knn
+pip install .
+cd ..
+rm -rf depth-diff-gaussian-rasterization
+git clone https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth 
+cd diff-gaussian-rasterization-w-depth
+pip install .
+
 ```
 
 Install PyTorch3D:
 
 ```bash
+cd third_party
 git clone https://github.com/facebookresearch/pytorch3d.git
 cd pytorch3d
 pip install -e .
@@ -129,6 +134,7 @@ pip install -e .
 Install tiny-cuda-nn:
 
 ```bash
+cd third_party
 git clone https://github.com/nvlabs/tiny-cuda-nn
 cd tiny-cuda-nn
 git submodule update --init --recursive
@@ -137,7 +143,7 @@ cmake --build build --config RelWithDebInfo -j
 pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
-## How to Use
+## 🚀 How to Use
 
 To use the Surgical Twin Pipeline, navigate to the `src` directory and run the `main.py` script with the appropriate arguments:
 
@@ -219,7 +225,7 @@ To run only the segmentation stage:
 python3 main.py --input_video data/input/video.mp4 --stages segmentation
 ```
 
-### Tools
+### 🔨 Tools
 
 Several utility tools are available in the `tools` directory to assist with various stages of the pipeline. Below are the tools and their usage:
 
@@ -283,3 +289,8 @@ Several utility tools are available in the `tools` directory to assist with vari
   - Output: Processed video with bounding boxes in `data/tools_output/yolo_output`.
 
 
+## 💡 Acknowledgments
+
+We would like to express our gratitude to the developers of the following projects ([Haze Removal](https://github.com/trishababu/desmoking-algorithm-using-dcp-and-cnn), [ultralytics](https://github.com/ultralytics/ultralytics), [monst3r](https://github.com/Junyi42/monst3r), [Depth-Anything-V2](https://github.com/DepthAnything/Depth-Anything-V2/tree/main), [SurgicalGaussian](https://github.com/xwx0924/SurgicalGaussian), [STTN](https://github.com/researchmm/STTN), [SAM2](https://github.com/facebookresearch/sam2)), as some of our source code is borrowed from them. 
+
+Their incredible work has been instrumental in making this project possible. 🙏
