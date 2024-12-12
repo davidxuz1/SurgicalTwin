@@ -2,10 +2,10 @@
 
 ## Environment Setup Guide
 
-This guide provides comprehensive instructions for setting up the environment for the Surgical Twin project, including installation of required dependencies and models.
+This guide provides detailed instructions for setting up, using, and understanding the features of the Surgical Twin project, including installation of required dependencies and models.
 
 ```bash
-git clone 
+git clone https://github.com/davidxuz1/SurgicalTwin.git
 cd SurgicalTwin
 ```
 
