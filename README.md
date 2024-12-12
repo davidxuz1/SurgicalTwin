@@ -51,6 +51,14 @@ conda activate surgical_twin
 conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
 ```
 
+Install the required Python dependencies:
+
+```bash
+cd SurgicalTwin
+pip install -r requirements.txt
+```
+
+
 ### 🔧 Required Manual Installations
 
 #### 1. SAM2 Installation
