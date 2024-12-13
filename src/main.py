@@ -2,12 +2,18 @@ import os
 import sys
 import argparse
 import torch
+import cv2
+import shutil
+import numpy as np
+from pathlib import Path
+import subprocess
 from stages.detection.surgical_tools_detection_stage import SurgicalToolsDetectionStage
 from stages.dehaze.dehaze_video import DehazeStage
 from stages.segmentation.segmentation_stage import SegmentationStage
 from stages.inpainting.inpainting_stage import InpaintingStage
 from stages.depth.depth_stage import DepthStage
 from stages.pose.pose_stage import PoseStage
+#from stages.gaussian.gaussian_stage import GaussianStage
 import time
 from datetime import datetime
 
@@ -41,7 +47,7 @@ def parse_args():
     # Segmentation stage
     parser.add_argument("--batch_size_segmentation", type=int, default=300,
                       help="Number of frames to process in each batch for segmentation stage")
-    parser.add_argument("--dilatation_factor_segmentation", type=float, default=1.0,
+    parser.add_argument("--dilatation_factor_segmentation", type=float, default=10.0,
                       help="Factor for mask dilatation for segmentation stage")
     parser.add_argument("--mask_segmentation", type=int, default=2,
                       help="1 to save binary masks, 2 to skip mask saving")
@@ -57,6 +63,10 @@ def parse_args():
     parser.add_argument('--num_frames_pose', type=int, default=300, 
                         help='Maximum number of frames for video processing in pose stage')
 
+
+    # Gaussian stage
+    parser.add_argument("--config_gaussian", type=str, default='video_gaussian.py', 
+                    help="3D Gaussian Splatting config file")
     
     args = parser.parse_args()
     
@@ -101,7 +111,8 @@ def parse_args():
         "dehaze_inpainting_depth_pose",
         "dehaze_segmentation_inpainting_depth_pose",
         "detection_inpainting_depth_pose",
-        "detection_dehaze_inpainting_depth_pose"
+        "detection_dehaze_inpainting_depth_pose",
+        "gaussian"
     ]
 
     
@@ -144,6 +155,11 @@ def parse_args():
         if args.num_frames_pose <= 0:
             sys.exit(f"Error: Number of frames for pose stage must be greater than 0")
     
+    # Gaussian stage validations
+    if args.stages in ["all", "gaussian"]:
+        if not args.config_gaussian.endswith('.py'):
+            sys.exit(f"Error: Config file for gaussian stage must be a .py file")
+
     return args
 
 
@@ -168,12 +184,14 @@ def main():
     inpainting_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/inpainting")
     depth_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/depth")
     pose_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/pose")
+    gaussian_output_dir = os.path.join(PROJECT_ROOT, "data/output")
     os.makedirs(detection_output_dir, exist_ok=True)
     os.makedirs(dehaze_output_dir, exist_ok=True)
     os.makedirs(segmentation_output_dir, exist_ok=True)
     os.makedirs(inpainting_output_dir, exist_ok=True)
     os.makedirs(depth_output_dir, exist_ok=True)
     os.makedirs(pose_output_dir, exist_ok=True)
+    os.makedirs(gaussian_output_dir, exist_ok=True)
 
     # Path de salida de detection stage
     detected_tools_video = os.path.join(detection_output_dir, "surgical_tools_detected.mp4")
@@ -397,7 +415,7 @@ def main():
                     "dehaze_inpainting_depth", "dehaze_segmentation_inpainting_depth",
                     "detection_inpainting_depth", "detection_dehaze_inpainting_depth"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Depth Estimation")
+        print("Iniciando etapa de Depth")
         print(f"Video de entrada: {inpainted_video}")
         print("="*80 + "\n")
 
@@ -420,13 +438,13 @@ def main():
             log_time(log_file, "Depth Estimation", depth_time)
             
             print("\n" + "="*80)
-            print("Proceso de Depth Estimation completado exitosamente")
+            print("Proceso de Depth completado exitosamente")
             print(f"Tiempo de procesamiento: {depth_time:.2f} segundos")
             print(f"Frames de profundidad guardados en: {depth_frames_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de depth estimation: {str(e)}")
+            sys.exit(f"Error durante el procesamiento de depth: {str(e)}")
 
 
     ####################################################################################
@@ -441,7 +459,7 @@ def main():
                     "detection_inpainting_depth_pose", 
                     "detection_dehaze_inpainting_depth_pose"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Pose Estimation")
+        print("Iniciando etapa de Pose")
         print(f"Directorio de de video de entrada: {inpainted_video}")
         print("="*80 + "\n")
 
@@ -472,15 +490,169 @@ def main():
             log_time(log_file, "Pose Estimation", pose_time)
             
             print("\n" + "="*80)
-            print("Proceso de Pose Estimation completado exitosamente")
+            print("Proceso de Pose completado exitosamente")
             print(f"Tiempo de procesamiento: {pose_time:.2f} segundos")
             print(f"Poses bounds guardado en: {pose_bounds_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de pose estimation: {str(e)}")
+            sys.exit(f"Error durante el procesamiento de pose: {str(e)}")
 
+            
+    ####################################################################################### 
+    #################################GaussianStage#########################################
+    #######################################################################################
 
+    def process_frame_to_square(img, target_size):
+        """
+        Redimensiona y centra una imagen en un cuadrado manteniendo el aspect ratio
+        
+        Args:
+            img: Imagen de entrada (numpy array)
+            target_size: Tamaño objetivo del cuadrado
+        
+        Returns:
+            square_img: Imagen procesada en formato cuadrado
+        """
+        h, w = img.shape[:2]
+        ratio = min(target_size / w, target_size / h)
+        new_w = int(w * ratio)
+        new_h = int(h * ratio)
+        
+        resized_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
+        # Check if input is grayscale or RGB
+        channels = 1 if len(img.shape) == 2 else img.shape[2]
+        square_img = np.zeros((target_size, target_size, channels), dtype=img.dtype)
+        
+        x_offset = (target_size - new_w) // 2
+        y_offset = (target_size - new_h) // 2
+        
+        if channels == 1:
+            # Handle grayscale images
+            if len(resized_img.shape) == 2:
+                resized_img = resized_img[..., np.newaxis]
+            square_img[y_offset:y_offset+new_h, x_offset:x_offset+new_w, 0] = resized_img[..., 0]
+        else:
+            # Handle RGB images
+            square_img[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_img
+        
+        return square_img
+
+    if args.stages in ["all", "gaussian"]:
+        print("\n" + "="*80)
+        print("Iniciando etapa de 3D Dynamic Gaussian Splatting")
+        print(f"Directorio de video de entrada: {inpainted_video}")
+        print("="*80 + "\n")
+        
+        gaussian_start_time = time.time()
+        
+        try:
+            # Crear estructura de directorios
+            gaussian_input_dir = os.path.join(PROJECT_ROOT, "data/intermediate/gaussian")
+            depth_input_dir = os.path.join(gaussian_input_dir, "depth")
+            images_input_dir = os.path.join(gaussian_input_dir, "images")
+            
+            os.makedirs(gaussian_input_dir, exist_ok=True)
+            os.makedirs(depth_input_dir, exist_ok=True)
+            os.makedirs(images_input_dir, exist_ok=True)
+            
+            # # Procesar frames del video
+            # cap = cv2.VideoCapture(inpainted_video)
+            # if not cap.isOpened():
+            #     raise Exception(f"No se pudo abrir el video: {inpainted_video}")
+                
+            # frame_count = 0
+            # target_size = args.image_size_pose
+            
+            # while True:
+            #     ret, frame = cap.read()
+            #     if not ret:
+            #         break
+                    
+            #     square_frame = process_frame_to_square(frame, target_size)
+            #     frame_path = os.path.join(images_input_dir, f"frame_{frame_count:06d}.png")
+            #     cv2.imwrite(frame_path, square_frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            #     frame_count += 1
+                
+            # cap.release()
+            
+            # if frame_count == 0:
+            #     raise Exception("No se pudieron extraer frames del video")
+
+            # # Procesar frames de profundidad
+            # depth_files = sorted(os.listdir(depth_frames_dir))
+            # if not depth_files:
+            #     raise Exception(f"No se encontraron archivos de profundidad en: {depth_frames_dir}")
+                
+            # for idx, depth_file in enumerate(depth_files):
+            #     depth_path = os.path.join(depth_frames_dir, depth_file)
+            #     depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            #     if depth_img is None:
+            #         raise Exception(f"No se pudo leer el archivo de profundidad: {depth_path}")
+                    
+            #     processed_depth = process_frame_to_square(depth_img, target_size)
+            #     output_depth_path = os.path.join(depth_input_dir, f"depth_{idx:06d}.png")
+            #     cv2.imwrite(output_depth_path, processed_depth, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+
+            # # Copiar pose bounds
+            # if not os.path.exists(pose_bounds):
+            #     raise Exception(f"No se encontró el archivo pose_bounds: {pose_bounds}")
+                
+            # shutil.copy2(pose_bounds, os.path.join(gaussian_input_dir, "pose_bounds.npy"))
+            
+            # Configurar y ejecutar gaussian stage
+            arguments_gaussian = os.path.join(PROJECT_ROOT, f"config/gaussian_stage/{args.config_gaussian}")
+            if not os.path.exists(arguments_gaussian):
+                raise Exception(f"No se encontró el archivo de configuración: {arguments_gaussian}")
+
+            # Obtener el path absoluto del directorio SurgicalGaussian
+            gaussian_dir = os.path.join(PROJECT_ROOT, "third_party/SurgicalGaussian")
+            
+            # Guardar el directorio de trabajo actual
+            original_dir = os.getcwd()
+            
+            # Cambiar al directorio de SurgicalGaussian
+            os.chdir(gaussian_dir)
+            
+            
+            # Obtener rutas relativas
+            relative_input_dir = os.path.relpath(gaussian_input_dir, gaussian_dir)
+            relative_output_dir = os.path.relpath(gaussian_output_dir, gaussian_dir)
+            relative_config = os.path.relpath(arguments_gaussian, gaussian_dir)
+
+            command = [
+                "python",
+                "train.py",
+                "-s", relative_input_dir,
+                "-m", relative_output_dir,
+                "--config", relative_config
+            ]
+
+            process = subprocess.run(command, check=True)
+
+            
+            # Restaurar el directorio de trabajo original
+            os.chdir(original_dir)
+            
+            if process.returncode == 0:
+                print("\nEntrenamiento de Gaussian Splatting completado exitosamente")
+            else:
+                raise Exception("Error durante el entrenamiento de Gaussian Splatting")
+
+            gaussian_time = time.time() - gaussian_start_time
+            log_time(log_file, "Gaussian Splatting", gaussian_time)
+            
+            print("\n" + "="*80)
+            print("Proceso de Gaussian Splatting completado exitosamente")
+            print(f"Tiempo de procesamiento: {gaussian_time:.2f} segundos")
+            print("="*80 + "\n")
+            
+        except Exception as e:
+            # Asegurarse de restaurar el directorio original incluso si hay error
+            os.chdir(original_dir)
+            sys.exit(f"Error durante el procesamiento de Gaussian Splatting: {str(e)}")
+           
 
     # Tiempo total de procesamiento
     total_time = time.time() - total_start_time
