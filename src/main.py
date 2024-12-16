@@ -13,7 +13,6 @@ from stages.segmentation.segmentation_stage import SegmentationStage
 from stages.inpainting.inpainting_stage import InpaintingStage
 from stages.depth.depth_stage import DepthStage
 from stages.pose.pose_stage import PoseStage
-#from stages.gaussian.gaussian_stage import GaussianStage
 import time
 from datetime import datetime
 
@@ -29,7 +28,7 @@ def parse_args():
     
     # Stages argument
     parser.add_argument("--stages", type=str, default="all",
-                      help="Stages to run: all | segmentation | detection_segmentation | dehaze | detection | dehaze_detection_segmentation")
+                      help="Stages to run: all | segmentation | dehaze | detection | depth | inpainting | pose | gaussian | render")
 
     # Detection stage
     parser.add_argument("--model_path_detection", type=str,
@@ -39,7 +38,7 @@ def parse_args():
                       default=0.6,
                       help="Detection confidence threshold (0-1)")
     parser.add_argument("--dilation_factor_detection", type=float,
-                      default=1.4,
+                      default=1.2,
                       help="Bounding box dilation factor (>1) for detection stage")
     parser.add_argument("--fixed_bbox_watermark", type=int, nargs=4,
                       help="Fixed bounding box coordinates (x_min y_min x_max y_max) for video watermark")
@@ -75,53 +74,24 @@ def parse_args():
     if not os.path.exists(args.input_video):
         sys.exit(f"Error: Input video not found at {args.input_video}")
     
-    # Validar stages
     valid_stages = [
-        "all",  # todas las etapas
+        "all",  # all stages
         "segmentation",
-        "detection_segmentation",
         "dehaze",
         "detection",
-        "dehaze_detection_segmentation",
         "inpainting",
-        "segmentation_inpainting",
-        "detection_segmentation_inpainting",
-        "dehaze_detection_segmentation_inpainting",
-        "dehaze_inpainting",
-        "dehaze_segmentation",
-        "dehaze_segmentation_inpainting",
-        "detection_inpainting",
-        "detection_dehaze",
-        "detection_dehaze_inpainting",
         "depth",
-        "inpainting_depth",
-        "segmentation_inpainting_depth",
-        "detection_segmentation_inpainting_depth",
-        "dehaze_detection_segmentation_inpainting_depth",
-        "dehaze_inpainting_depth",
-        "dehaze_segmentation_inpainting_depth",
-        "detection_inpainting_depth",
-        "detection_dehaze_inpainting_depth",
         "pose",
-        "depth_pose",
-        "inpainting_depth_pose",
-        "segmentation_inpainting_depth_pose",
-        "detection_segmentation_inpainting_depth_pose",
-        "dehaze_detection_segmentation_inpainting_depth_pose",
-        "dehaze_inpainting_depth_pose",
-        "dehaze_segmentation_inpainting_depth_pose",
-        "detection_inpainting_depth_pose",
-        "detection_dehaze_inpainting_depth_pose",
-        "gaussian"
+        "gaussian", 
+        "render"
     ]
 
     
     if args.stages not in valid_stages:
-        sys.exit(f"Error: Valor de --stages inválido. Debe ser uno de: {', '.join(valid_stages)}")
+        sys.exit(f"Error: Invalid --stages value. Must be one of: {', '.join(valid_stages)}")
 
     # Detection stage validations
-    if args.stages in ["all", "detection_segmentation", "detection", "dehaze_detection_segmentation", 
-                       "detection_inpainting", "detection_dehaze", "detection_dehaze_inpainting"]:
+    if args.stages in ["all", "detection"]:
         if not os.path.exists(args.model_path_detection):
             sys.exit(f"Error: Model weights for detection stage not found at {args.model_path_detection}")
         if not 0 <= args.threshold_detection <= 1:
@@ -132,8 +102,7 @@ def parse_args():
             sys.exit(f"Error: Fixed bounding box of video watermark must have 4 coordinates")
 
     # Segmentation stage validations
-    if args.stages in ["all", "segmentation", "detection_segmentation", "dehaze_detection_segmentation", 
-                       "segmentation_inpainting", "detection_segmentation_inpainting", "dehaze_detection_segmentation_inpainting"]:
+    if args.stages in ["all", "segmentation"]:
         if args.dilatation_factor_segmentation <= 1:
             sys.exit(f"Error: Dilation factor for segmentation stage must be greater than 1")
         if args.mask_segmentation not in [1, 2]:
@@ -142,14 +111,13 @@ def parse_args():
             sys.exit(f"Error: Batch size for segmentation stage must be greater than 0")
 
     # Depth stage validations
-    if args.stages in ["all", "depth", "inpainting_depth", "segmentation_inpainting_depth", 
-                       "detection_segmentation_inpainting_depth", "dehaze_detection_segmentation_inpainting_depth"]:
-        if not os.path.exists(args.encoder_depth):
+    if args.stages in ["all", "depth"]:
+        if args.encoder_depth not in ['vits', 'vitb', 'vitl', 'vitg']:
             sys.exit(f"Error: Encoder type must be one of ['vits', 'vitb', 'vitl', 'vitg']")
 
+
     # Pose stage validations
-    if args.stages in ["all", "pose", "depth_pose", "inpainting_depth_pose", "segmentation_inpainting_depth_pose", 
-                       "detection_segmentation_inpainting_depth_pose", "dehaze_detection_segmentation_inpainting_depth_pose"]:
+    if args.stages in ["all", "pose"]:
         if args.image_size_pose not in [224, 512]:
             sys.exit(f"Error: Image size for pose stage must be 224 or 512")
         if args.num_frames_pose <= 0:
@@ -166,18 +134,18 @@ def parse_args():
 def log_time(file_path, stage_name, time_taken):
     with open(file_path, 'a') as f:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        f.write(f"{timestamp} - {stage_name}: {time_taken:.2f} segundos\n")
+        f.write(f"{timestamp} - {stage_name}: {time_taken:.2f} seconds\n")
 
 def main():
     args = parse_args()
     total_start_time = time.time()
 
-    # Crear archivo de registro de tiempos
+    # Create a log file for processing times
     log_dir = os.path.join(PROJECT_ROOT, "data/logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "processing_times.txt")
 
-    # Paths fijos
+    # Fixed paths
     detection_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/detection")
     dehaze_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/dehaze")
     segmentation_output_dir = os.path.join(PROJECT_ROOT, "data/intermediate/segmentation")
@@ -193,63 +161,35 @@ def main():
     os.makedirs(pose_output_dir, exist_ok=True)
     os.makedirs(gaussian_output_dir, exist_ok=True)
 
-    # Path de salida de detection stage
+    # Output path for detection stage
     detected_tools_video = os.path.join(detection_output_dir, "surgical_tools_detected.mp4")
     tools_bbox_file = os.path.join(detection_output_dir, "surgical_tools_bbox.txt")
 
-    # Path de salida de dehaze stage
+    # Output path for dehaze stage
     dehazed_video = os.path.join(dehaze_output_dir, "dehazed_video.mp4")
 
-    # Path de salida de segmentation stage
+    # Output path for segmentation stage
     segmented_video = os.path.join(segmentation_output_dir, "segmented_video.mp4")
     segmented_masks = os.path.join(segmentation_output_dir, "segmented_video_masks.npy")
 
-    # Path de salida de inpainting stage
+    # Output path for inpainting stage
     inpainted_video = os.path.join(inpainting_output_dir, "inpainted_video.mp4")
 
-    # Path de salida de depth stage
+    # Output path for depth stage
     depth_frames_dir = os.path.join(depth_output_dir, "depth_frames")
 
-    # Path de salida de pose stage
-    pose_bounds = os.path.join(pose_output_dir, "poses_bounds.npy")
+    # Output path for pose stage
+    poses_bounds = os.path.join(pose_output_dir, "poses_bounds.npy")
     pose_output_dir = os.path.join(pose_output_dir, "pose_output")
 
-    # Ejecutar etapas según --stages
-    # all: detection -> dehaze -> segmentation -> inpainting -> depth
-    # segmentation: sólo segmentación
-    # detection_segmentation: detección -> segmentación
-    # dehaze: sólo dehaze
-    # detection: sólo detección
-    # dehaze_detection_segmentation: dehaze -> detección -> segmentación
-    # inpainting: sólo inpainting
-    # segmentation_inpainting: segmentación -> inpainting
-    # detection_segmentation_inpainting: detección -> segmentación -> inpainting
-    # dehaze_detection_segmentation_inpainting: dehaze -> detección -> segmentación -> inpainting
-    # dehaze_inpainting: dehaze -> inpainting
-    # dehaze_segmentation: dehaze -> segmentación
-    # dehaze_segmentation_inpainting: dehaze -> segmentación -> inpainting
-    # detection_inpainting: detección -> inpainting
-    # detection_dehaze: detección -> dehaze
-    # detection_dehaze_inpainting: detección -> dehaze -> inpainting
-    # depth: sólo depth
-    # inpainting_depth: inpainting -> depth
-    # segmentation_inpainting_depth: segmentación -> inpainting -> depth
-    # detection_segmentation_inpainting_depth: detección -> segmentación -> inpainting -> depth
-    # dehaze_detection_segmentation_inpainting_depth: dehaze -> detección -> segmentación -> inpainting -> depth
-    # dehaze_inpainting_depth: dehaze -> inpainting -> depth
-    # dehaze_segmentation_inpainting_depth: dehaze -> segmentación -> inpainting -> depth
-    # detection_inpainting_depth: detección -> inpainting -> depth
-    # detection_dehaze_inpainting_depth: detección -> dehaze -> inpainting -> depth
 
     ####################################################################################
     ###########################SurgicalToolsDetectionStage##############################
     ####################################################################################
-    if args.stages in ["all", "detection_segmentation", "detection", "dehaze_detection_segmentation",
-                    "detection_segmentation_inpainting", "detection_inpainting", 
-                    "detection_dehaze", "detection_dehaze_inpainting"]:
+    if args.stages in ["all", "detection"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Detección de Herramientas Quirúrgicas")
-        print(f"Video de entrada: {args.input_video}")
+        print("Starting Surgical Tools Detection Stage")
+        print(f"Input video: {args.input_video}")
         print("="*80 + "\n")
 
         detection_start_time = time.time()
@@ -270,33 +210,31 @@ def main():
                 tools_bbox_file
             )
             
-            print(f"Video con detecciones guardado en: {video_output}")
-            print(f"Archivo de coordenadas guardado en: {txt_output}")
+            torch.cuda.empty_cache()
+            print(f"Detection video saved at: {video_output}")
+            print(f"Coordinates file saved at: {txt_output}")
 
             detection_time = time.time() - detection_start_time
-            log_time(log_file, "Detección de Herramientas", detection_time)
-            
+            log_time(log_file, "Tools Detection", detection_time)
+
             print("\n" + "="*80)
-            print("Proceso de Detección completado exitosamente")
-            print(f"Tiempo de procesamiento: {detection_time:.2f} segundos")
-            print(f"Video con detecciones guardado en: {video_output}")
-            print(f"Archivo de coordenadas guardado en: {txt_output}")
+            print("Detection Process completed successfully")
+            print(f"Processing time: {detection_time:.2f} seconds")
+            print(f"Detection video saved at: {video_output}")
+            print(f"Coordinates file saved at: {txt_output}")
             print("="*80 + "\n")
 
         except Exception as e:
-            sys.exit(f"Error durante la detección: {str(e)}")
+            sys.exit(f"Error during detection: {str(e)}")
 
 
     ####################################################################################
     #################################DehazeStage########################################
     ####################################################################################
-    if args.stages in ["all", "dehaze", "dehaze_detection_segmentation",
-                    "dehaze_inpainting", "dehaze_segmentation",
-                    "dehaze_segmentation_inpainting", "detection_dehaze",
-                    "detection_dehaze_inpainting", "dehaze_detection_segmentation_inpainting"]:
+    if args.stages in ["all", "dehaze"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Dehaze")
-        print(f"Video de entrada: {args.input_video}")
+        print("Starting Dehaze stage")
+        print(f"Input video: {args.input_video}")
         print("="*80 + "\n")
 
         dehaze_start_time = time.time()
@@ -306,28 +244,26 @@ def main():
             dehaze_stage = DehazeStage()
             dehazed_video_path = dehaze_stage.process(args.input_video, dehazed_video)
             
+            torch.cuda.empty_cache()
             dehaze_time = time.time() - dehaze_start_time
             log_time(log_file, "Dehaze", dehaze_time)
             
             print("\n" + "="*80)
-            print("Proceso de Dehaze completado exitosamente")
-            print(f"Tiempo de procesamiento: {dehaze_time:.2f} segundos")
-            print(f"Video procesado guardado en: {dehazed_video_path}")
+            print("Dehaze process completed successfully")
+            print(f"Processing time: {dehaze_time:.2f} seconds")
+            print(f"Processed video saved at: {dehazed_video_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de dehaze: {str(e)}")
+            sys.exit(f"Error during dehaze processing: {str(e)}")
 
     ####################################################################################
     #################################SegmentationStage##################################
     ####################################################################################
-    if args.stages in ["all", "segmentation", "detection_segmentation", "dehaze_detection_segmentation",
-                    "segmentation_inpainting", "detection_segmentation_inpainting",
-                    "dehaze_segmentation", "dehaze_segmentation_inpainting",
-                    "dehaze_detection_segmentation_inpainting"]:
+    if args.stages in ["all", "segmentation"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Segmentación")
-        print(f"Video de entrada: {dehazed_video}")
+        print("Starting Segmentation stage")
+        print(f"Input video: {dehazed_video}")
         print("="*80 + "\n")
 
         segmentation_start_time = time.time()
@@ -351,28 +287,27 @@ def main():
                 segmented_video
             )
             
+            torch.cuda.empty_cache()
             segmentation_time = time.time() - segmentation_start_time
-            log_time(log_file, "Segmentación", segmentation_time)
+            log_time(log_file, "Segmentation", segmentation_time)
             
             print("\n" + "="*80)
-            print("Proceso de Segmentación completado exitosamente")
-            print(f"Tiempo de procesamiento: {segmentation_time:.2f} segundos")
-            print(f"Video segmentado guardado en: {segmented_video_path}")
+            print("Segmentation process completed successfully")
+            print(f"Processing time: {segmentation_time:.2f} seconds")
+            print(f"Segmented video saved at: {segmented_video_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de segmentación: {str(e)}")
-        
+            sys.exit(f"Error during segmentation processing: {str(e)}")
+
     ####################################################################################
     #################################InpaintingStage####################################
     ####################################################################################
 
-    if args.stages in ["all", "inpainting", "segmentation_inpainting", 
-                    "detection_segmentation_inpainting", 
-                    "dehaze_detection_segmentation_inpainting"]:
+    if args.stages in ["all", "inpainting"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Inpainting")
-        print(f"Video de entrada: {dehazed_video}")
+        print("Starting Inpainting stage")
+        print(f"Input video: {dehazed_video} and segmentation masks: {segmented_masks}")
         print("="*80 + "\n")
 
         inpainting_start_time = time.time()
@@ -390,36 +325,30 @@ def main():
                 inpainted_video
             )
             
+            torch.cuda.empty_cache()
             inpainting_time = time.time() - inpainting_start_time
             log_time(log_file, "Inpainting", inpainting_time)
             
             print("\n" + "="*80)
-            print("Proceso de Inpainting completado exitosamente")
-            print(f"Tiempo de procesamiento: {inpainting_time:.2f} segundos")
-            print(f"Video inpainted guardado en: {inpainted_video_path}")
+            print("Inpainting process completed successfully")
+            print(f"Processing time: {inpainting_time:.2f} seconds")
+            print(f"Inpainted video saved at: {inpainted_video_path}")
             print("="*80 + "\n")
             
-            # Actualizar current_input_video
-            current_input_video = inpainted_video_path
-            
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de inpainting: {str(e)}")
+            sys.exit(f"Error during inpainting processing: {str(e)}")
 
 
     ####################################################################################
     #################################DepthStage#########################################
     ####################################################################################
-    if args.stages in ["all", "depth", "inpainting_depth", "segmentation_inpainting_depth",
-                    "detection_segmentation_inpainting_depth", 
-                    "dehaze_detection_segmentation_inpainting_depth",
-                    "dehaze_inpainting_depth", "dehaze_segmentation_inpainting_depth",
-                    "detection_inpainting_depth", "detection_dehaze_inpainting_depth"]:
+    if args.stages in ["all", "depth"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Depth")
-        print(f"Video de entrada: {inpainted_video}")
+        print("Starting Depth stage")
+        print(f"Input video: {inpainted_video}")
         print("="*80 + "\n")
 
-        # Verificar existencia del modelo Depth-Anything
+        # Verify Depth-Anything model existence
         depth_model_path = os.path.join(PROJECT_ROOT, "models/pretrained/depth_model", f"depth_anything_v2_{args.encoder_depth}.pth")
         if not os.path.exists(depth_model_path):
             sys.exit(f"Error: Depth-Anything model not found at {depth_model_path}")
@@ -434,33 +363,27 @@ def main():
             )
             depth_frames_path = depth_stage.process(inpainted_video, depth_frames_dir)
             
+            torch.cuda.empty_cache()
             depth_time = time.time() - depth_start_time
             log_time(log_file, "Depth Estimation", depth_time)
             
             print("\n" + "="*80)
-            print("Proceso de Depth completado exitosamente")
-            print(f"Tiempo de procesamiento: {depth_time:.2f} segundos")
-            print(f"Frames de profundidad guardados en: {depth_frames_path}")
+            print("Depth process completed successfully")
+            print(f"Processing time: {depth_time:.2f} seconds")
+            print(f"Depth frames saved at: {depth_frames_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de depth: {str(e)}")
+            sys.exit(f"Error during depth processing: {str(e)}")
 
 
     ####################################################################################
     #################################PoseStage##########################################
     ####################################################################################
-    if args.stages in ["all", "pose", "depth_pose", "inpainting_depth_pose", 
-                    "segmentation_inpainting_depth_pose",
-                    "detection_segmentation_inpainting_depth_pose", 
-                    "dehaze_detection_segmentation_inpainting_depth_pose",
-                    "dehaze_inpainting_depth_pose", 
-                    "dehaze_segmentation_inpainting_depth_pose",
-                    "detection_inpainting_depth_pose", 
-                    "detection_dehaze_inpainting_depth_pose"]:
+    if args.stages in ["all", "pose"]:
         print("\n" + "="*80)
-        print("Iniciando etapa de Pose")
-        print(f"Directorio de de video de entrada: {inpainted_video}")
+        print("Starting Pose stage")
+        print(f"Input video directory: {inpainted_video}")
         print("="*80 + "\n")
 
         # Initialize and run segmentation stage
@@ -481,39 +404,31 @@ def main():
             fps=0,
             num_frames=args.num_frames_pose
             )
-            pose_bounds_path = pose_stage.process(
+            poses_bounds_path = pose_stage.process(
                 input_video= inpainted_video,
-                output_path=pose_bounds,
+                output_path=poses_bounds,
                 output_dir=pose_output_dir
             )
+
+            torch.cuda.empty_cache()
             pose_time = time.time() - pose_start_time
             log_time(log_file, "Pose Estimation", pose_time)
             
             print("\n" + "="*80)
-            print("Proceso de Pose completado exitosamente")
-            print(f"Tiempo de procesamiento: {pose_time:.2f} segundos")
-            print(f"Poses bounds guardado en: {pose_bounds_path}")
+            print("Pose process completed successfully")
+            print(f"Processing time: {pose_time:.2f} seconds")
+            print(f"Poses bounds saved at: {poses_bounds_path}")
             print("="*80 + "\n")
             
         except Exception as e:
-            sys.exit(f"Error durante el procesamiento de pose: {str(e)}")
-
-            
+            sys.exit(f"Error during pose processing: {str(e)}")
+                
     ####################################################################################### 
     #################################GaussianStage#########################################
     #######################################################################################
 
     def process_frame_to_square(img, target_size):
-        """
-        Redimensiona y centra una imagen en un cuadrado manteniendo el aspect ratio
-        
-        Args:
-            img: Imagen de entrada (numpy array)
-            target_size: Tamaño objetivo del cuadrado
-        
-        Returns:
-            square_img: Imagen procesada en formato cuadrado
-        """
+
         h, w = img.shape[:2]
         ratio = min(target_size / w, target_size / h)
         new_w = int(w * ratio)
@@ -540,83 +455,107 @@ def main():
         return square_img
 
     if args.stages in ["all", "gaussian"]:
+        # Define paths
+        gaussian_input_dir = os.path.join(PROJECT_ROOT, "data/intermediate/gaussian")
+        depth_input_dir = os.path.join(gaussian_input_dir, "depth")
+        images_input_dir = os.path.join(gaussian_input_dir, "images")
+        poses_bounds_path = os.path.join(gaussian_input_dir, "poses_bounds.npy")
+
+        # Function to remove existing directories and files
+        def remove_existing_dirs_and_file():
+            if os.path.exists(depth_input_dir):
+                shutil.rmtree(depth_input_dir)
+                print(f"Deleted folder: {depth_input_dir}")
+            if os.path.exists(images_input_dir):
+                shutil.rmtree(images_input_dir)
+                print(f"Deleted folder: {images_input_dir}")
+            if os.path.exists(poses_bounds_path):
+                os.remove(poses_bounds_path)
+                print(f"Deleted file: {poses_bounds_path}")
+
+        # Remove existing directories and files
+        remove_existing_dirs_and_file()
+
+        # Create necessary directories
+        os.makedirs(gaussian_input_dir, exist_ok=True)
+        os.makedirs(depth_input_dir, exist_ok=True)
+        os.makedirs(images_input_dir, exist_ok=True)
+            
         print("\n" + "="*80)
-        print("Iniciando etapa de 3D Dynamic Gaussian Splatting")
-        print(f"Directorio de video de entrada: {inpainted_video}")
+        print("Starting 3D Dynamic Gaussian Splatting stage")
+        print(f"Input directory: {gaussian_input_dir}")
         print("="*80 + "\n")
-        
+            
         gaussian_start_time = time.time()
         
         try:
-            # Crear estructura de directorios
-            gaussian_input_dir = os.path.join(PROJECT_ROOT, "data/intermediate/gaussian")
-            depth_input_dir = os.path.join(gaussian_input_dir, "depth")
-            images_input_dir = os.path.join(gaussian_input_dir, "images")
-            
-            os.makedirs(gaussian_input_dir, exist_ok=True)
-            os.makedirs(depth_input_dir, exist_ok=True)
-            os.makedirs(images_input_dir, exist_ok=True)
-            
-            # # Procesar frames del video
-            # cap = cv2.VideoCapture(inpainted_video)
-            # if not cap.isOpened():
-            #     raise Exception(f"No se pudo abrir el video: {inpainted_video}")
-                
-            # frame_count = 0
-            # target_size = args.image_size_pose
-            
-            # while True:
-            #     ret, frame = cap.read()
-            #     if not ret:
-            #         break
-                    
-            #     square_frame = process_frame_to_square(frame, target_size)
-            #     frame_path = os.path.join(images_input_dir, f"frame_{frame_count:06d}.png")
-            #     cv2.imwrite(frame_path, square_frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
-            #     frame_count += 1
-                
-            # cap.release()
-            
-            # if frame_count == 0:
-            #     raise Exception("No se pudieron extraer frames del video")
+            # Process video frames
+            cap = cv2.VideoCapture(inpainted_video)
+            if not cap.isOpened():
+                raise Exception(f"Could not open video: {inpainted_video}")
 
-            # # Procesar frames de profundidad
-            # depth_files = sorted(os.listdir(depth_frames_dir))
-            # if not depth_files:
-            #     raise Exception(f"No se encontraron archivos de profundidad en: {depth_frames_dir}")
-                
-            # for idx, depth_file in enumerate(depth_files):
-            #     depth_path = os.path.join(depth_frames_dir, depth_file)
-            #     depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-            #     if depth_img is None:
-            #         raise Exception(f"No se pudo leer el archivo de profundidad: {depth_path}")
-                    
-            #     processed_depth = process_frame_to_square(depth_img, target_size)
-            #     output_depth_path = os.path.join(depth_input_dir, f"depth_{idx:06d}.png")
-            #     cv2.imwrite(output_depth_path, processed_depth, [cv2.IMWRITE_PNG_COMPRESSION, 9])
-
-            # # Copiar pose bounds
-            # if not os.path.exists(pose_bounds):
-            #     raise Exception(f"No se encontró el archivo pose_bounds: {pose_bounds}")
-                
-            # shutil.copy2(pose_bounds, os.path.join(gaussian_input_dir, "pose_bounds.npy"))
+            frame_count = 0
+            target_size = args.image_size_pose
             
-            # Configurar y ejecutar gaussian stage
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                square_frame = process_frame_to_square(frame, target_size)
+                frame_path = os.path.join(images_input_dir, f"frame_{frame_count:06d}.png")
+                cv2.imwrite(frame_path, square_frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+                frame_count += 1
+                
+            cap.release()
+            
+            if frame_count == 0:
+                raise Exception("No frames could be extracted from the video")
+
+            # Process depth frames
+            depth_files = sorted(os.listdir(depth_frames_dir))
+            if not depth_files:
+                raise Exception(f"No depth files found in: {depth_frames_dir}")
+
+            for idx, depth_file in enumerate(depth_files):
+                depth_path = os.path.join(depth_frames_dir, depth_file)
+                depth_img = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+                if depth_img is None:
+                    raise Exception(f"Could not read depth file: {depth_path}")
+
+                processed_depth = process_frame_to_square(depth_img, target_size)
+                output_depth_path = os.path.join(depth_input_dir, f"depth_{idx:06d}.png")
+                cv2.imwrite(output_depth_path, processed_depth, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+
+            # Copy pose bounds
+            if not os.path.exists(poses_bounds):
+                raise Exception(f"Poses bounds file not found: {poses_bounds}")
+ 
+            shutil.copy2(poses_bounds, os.path.join(gaussian_input_dir, "poses_bounds.npy"))
+            
+            # Configure and execute Gaussian stage
             arguments_gaussian = os.path.join(PROJECT_ROOT, f"config/gaussian_stage/{args.config_gaussian}")
             if not os.path.exists(arguments_gaussian):
-                raise Exception(f"No se encontró el archivo de configuración: {arguments_gaussian}")
+                raise Exception(f"Configuration file not found: {arguments_gaussian}")
 
-            # Obtener el path absoluto del directorio SurgicalGaussian
+            # Get absolute path to SurgicalGaussian directory
             gaussian_dir = os.path.join(PROJECT_ROOT, "third_party/SurgicalGaussian")
             
-            # Guardar el directorio de trabajo actual
+            # Save current working directory
             original_dir = os.getcwd()
             
-            # Cambiar al directorio de SurgicalGaussian
+            # Change to SurgicalGaussian directory
             os.chdir(gaussian_dir)
+
+            # command = [
+            #     "python",
+            #     "train.py",
+            #     "-s", "data/ownvideo",
+            #     "-m", "output/ownvideo",
+            #     "--config", "arguments/endonerf/ownvideo.py"
+            # ]
             
-            
-            # Obtener rutas relativas
+            # Prepare relative paths
             relative_input_dir = os.path.relpath(gaussian_input_dir, gaussian_dir)
             relative_output_dir = os.path.relpath(gaussian_output_dir, gaussian_dir)
             relative_config = os.path.relpath(arguments_gaussian, gaussian_dir)
@@ -632,38 +571,88 @@ def main():
             process = subprocess.run(command, check=True)
 
             
-            # Restaurar el directorio de trabajo original
+            # Restore original working directory
             os.chdir(original_dir)
             
             if process.returncode == 0:
-                print("\nEntrenamiento de Gaussian Splatting completado exitosamente")
+                print("\nGaussian Splatting training completed successfully")
+                torch.cuda.empty_cache()
             else:
-                raise Exception("Error durante el entrenamiento de Gaussian Splatting")
+                raise Exception("Error during Gaussian Splatting training")
 
             gaussian_time = time.time() - gaussian_start_time
             log_time(log_file, "Gaussian Splatting", gaussian_time)
             
             print("\n" + "="*80)
-            print("Proceso de Gaussian Splatting completado exitosamente")
-            print(f"Tiempo de procesamiento: {gaussian_time:.2f} segundos")
+            print("Gaussian Splatting process completed successfully")
+            print(f"Processing time: {gaussian_time:.2f} seconds")
             print("="*80 + "\n")
-            
-        except Exception as e:
-            # Asegurarse de restaurar el directorio original incluso si hay error
-            os.chdir(original_dir)
-            sys.exit(f"Error durante el procesamiento de Gaussian Splatting: {str(e)}")
-           
 
-    # Tiempo total de procesamiento
+        except Exception as e:
+            # Ensure original directory is restored in case of error
+            os.chdir(original_dir)
+            sys.exit(f"Error during Gaussian Splatting processing: {str(e)}")
+
+    #######################################################################################
+    ################################## Render Stage #######################################
+    #######################################################################################
+
+    if args.stages in ["all", "render"]:
+        print("\n" + "="*80)
+        print("Starting Render stage")
+        print("="*80 + "\n")
+        
+        render_start_time = time.time()
+        
+        # Change to SurgicalGaussian directory
+        gaussian_dir = os.path.join(PROJECT_ROOT, "third_party/SurgicalGaussian")
+        original_dir = os.getcwd()
+        os.chdir(gaussian_dir)
+
+        relative_output_dir = os.path.relpath(gaussian_output_dir, gaussian_dir)
+        render_command = [
+            "python",
+            "render.py",
+            "--model_path", relative_output_dir,
+            "--mode", "time",
+            "--iteration", "40000"
+        ]
+
+        try:
+            process = subprocess.run(render_command, check=True)
+            os.chdir(original_dir)
+
+            if process.returncode == 0:
+                print("\nRender process completed successfully")    
+            else:
+                raise Exception("Error during render")
+            
+            torch.cuda.empty_cache()
+            render_time = time.time() - render_start_time
+            log_time(log_file, "Render", render_time)
+
+            print("\n" + "="*80)
+            print("Render process completed successfully")
+            print(f"Processing time: {render_time:.2f} seconds")
+            print("="*80 + "\n")
+
+        except Exception as e:
+            os.chdir(original_dir)
+            sys.exit(f"Error during Render processing: {str(e)}")
+
+
+    #######################################################################################
+
+
+    # Total processing time
     total_time = time.time() - total_start_time
-    log_time(log_file, "Tiempo Total", total_time)
+    log_time(log_file, "Total Time", total_time)
     
     print("\n" + "="*80)
-    print("RESUMEN DE PROCESAMIENTO")
-    print(f"Tiempo total de ejecución: {total_time:.2f} segundos")
-    print(f"Registro de tiempos guardado en: {log_file}")
+    print("PROCESSING SUMMARY")
+    print(f"Total execution time: {total_time:.2f} seconds")
+    print(f"Processing times log saved at: {log_file}")
     print("="*80 + "\n")
-
 
 if __name__ == "__main__":
     main()
