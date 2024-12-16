@@ -61,7 +61,11 @@ pip install -r requirements.txt
 
 ### 🔧 Required Manual Installations
 
-#### 1. SAM2 Installation
+#### 1. YOLO Pre-trained Model
+
+If you want to use the pre-trained YOLO model, download it from [this link](https://drive.google.com/file/d/1uPcsP2ISl4gAHR5xPXO-CnaZdc7OXwds/view?usp=sharing) and place it to `SurgicalTwin/models/pretrained/Surgical_Tools_Detection_Yolov11_Model`. If you prefer to train your own model, refer to Section 4 in **Tools** for YOLO Training.
+
+#### 2. SAM2 Installation
 
 ```bash
 cd third_party
@@ -74,7 +78,7 @@ python setup.py build_ext --inplace
 **Download SAM2 Model**  
 Download `sam2_hiera_tiny.pt` from [this link](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_small.pt) and place it in `SurgicalTwin/models/pretrained/SAM2_model/sam2_hiera_tiny.pt`.
 
-#### 2. Monst3r Setup
+#### 3. Monst3r Setup
 
 ```bash
 cd third_party
@@ -87,7 +91,7 @@ bash download_ckpt.sh
 **Download Monst3r Model**  
 Download the model from [this link](https://drive.google.com/file/d/1Z1jO_JmfZj0z3bgMvCwqfUhyZ1bIbc9E/view) and place it in `SurgicalTwin/models/pretrained/pose_model/MonST3R_PO-TA-S-W_ViTLarge_BaseDecoder_512_dpt.pth`.
 
-#### 3. Inpainting Setup
+#### 4. Inpainting Setup
 
 ```bash
 cd third_party
@@ -97,7 +101,7 @@ git clone https://github.com/researchmm/STTN
 **Download STTN Model**  
 Download `sttn.pth` from [this link](https://drive.google.com/file/d/1ZAMV8547wmZylKRt5qR_tC5VlosXD4Wv/view) and place it in `SurgicalTwin/models/pretrained/STTN_inpainting_model/sttn.pth`.
 
-#### 4. Depth Setup
+#### 5. Depth Setup
 
 ```bash
 cd third_party
@@ -107,7 +111,7 @@ git clone https://github.com/DepthAnything/Depth-Anything-V2
 **Download Depth Model**  
 Download the model from [this link](https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth?download=true) and place it in `SurgicalTwin/models/pretrained/depth_model/depth_anything_v2_vitl.pth`.
 
-#### 5. SurgicalGaussian Installation
+#### 6. SurgicalGaussian Installation
 
 ```bash
 cd third_party
@@ -170,7 +174,7 @@ The script supports the following arguments:
 
 - **Stages**:
   - `--stages`: Select the stages to run.  
-    Options: `all`, `segmentation`, `detection_segmentation`, `dehaze`, `detection`, `dehaze_detection_segmentation`.  
+    Options: `all`, `detection`, `dehaze`, `segmentation`, `inpainting`, `depth`, `pose`, `gaussian`, `render`.  
     Default: `all`.
 
 - **Detection Stage**:
@@ -179,14 +183,14 @@ The script supports the following arguments:
   - `--threshold_detection`: Detection confidence threshold (0-1).  
     Default: `0.6`.
   - `--dilation_factor_detection`: Bounding box dilation factor (>1).  
-    Default: `1.4`.
+    Default: `1.2`.
   - `--fixed_bbox_watermark`: Fixed bounding box coordinates (x_min, y_min, x_max, y_max) where the video watermark is.
 
 - **Segmentation Stage**:
   - `--batch_size_segmentation`: Number of frames to process in each batch.  
     Default: `300`.
   - `--dilatation_factor_segmentation`: Mask dilation factor.  
-    Default: `1.0`.
+    Default: `10.0`.
   - `--mask_segmentation`: Choose 1 to save binary masks or 2 to skip saving.  
     Default: `2`.
 
@@ -202,6 +206,10 @@ The script supports the following arguments:
   - `--num_frames_pose`: Maximum number of frames to process.  
     Default: `300`.
 
+- **Gaussian Stage**:
+  - `--config_gaussian`: Path to the 3D Gaussian Splatting configuration file.  
+    Default: `video_gaussian.py`.
+
 ### Outputs
 
 1. **Intermediate Results**:
@@ -212,12 +220,14 @@ The script supports the following arguments:
      - `inpainting`
      - `pose`
      - `segmentation`
-
+     - `gaussian` (corresponding to the input needed for the Gaussian process)
+     
 2. **Logs**:
    - Execution times for each stage are logged in the `data/logs` folder.
 
 3. **Final Output**:
    - The final digital twin generated using Dynamic 3D Gaussian Splatting is saved in the `output` folder.
+   - For the `render` stage, the output is exported as a `video.mp4` file in `data/output/train/interpolate_40000/renders`.
 
 ### Example Usage
 
@@ -232,6 +242,11 @@ To run only the segmentation stage:
 ```bash
 python3 main.py --input_video data/input/video.mp4 --stages segmentation
 ```
+
+#### Recommendation
+
+We recommend processing the video stage by stage in the following order: `detection`, `dehaze`, `segmentation`, `inpainting`, `depth`, `pose`, `gaussian`, `render`. This approach allows you to review each output in the corresponding intermediate results folder before proceeding to the next stage, enabling parameter tuning and ensuring optimal results without waiting for all stages to complete.
+
 
 ### 🔨 Tools
 
@@ -249,7 +264,18 @@ Several utility tools are available in the `tools` directory to assist with vari
   - Output: `data/tools_output/fixed_bbox_watermark.txt`
   - Use the generated bounding box with the `--fixed_bbox_watermark` argument in `main.py`.
 
-#### 2. **Pose Visualizer**
+#### 2. **Video Cutter**
+- **Script**: `tools/video_cut.py`
+- **Description**: Cuts a video between specified time intervals or extracts a single frame at a specific time. To specify the time intervals, use the arguments `--start` and `--end` for cutting, or `--frame` for extracting a frame. Specify the mode using the `--i` argument: `1` for cutting a video and `2` for extracting a frame.
+- **Usage**:
+  ```bash
+  python3 tools/video_cut.py --input <path_to_video> --i <1_or_2> --start <start_time_in_minutes> --end <end_time_in_minutes> --frame <frame_time_in_minutes>
+  ```
+  - Input: A video file located at the specified path.
+  - Output: A cut video (`video_cut.mp4`) if `--i 1`, or a single extracted frame (`frame_minuto_<time>.png`) if `--i 2`.
+
+
+#### 3. **Pose Visualizer**
 - **Script**: `tools/pose_visualizer/pose_visualizer.py`
 - **Description**: Visualizes the interactive 4D results from the pose stage.
 - **Output**: Interactive visualization of results from `data/intermediate/pose/pose_output`.
@@ -259,7 +285,7 @@ Several utility tools are available in the `tools` directory to assist with vari
   ```
   - Input: `data/intermediate/pose/pose_output`.
 
-#### 3. **YOLO Training**
+#### 4. **YOLO Training**
 - **Training Script**: `tools/train_yolo/yolov11_train.py`
 - **Description**: Trains the YOLOv11 model for surgical tool detection.
 - **Setup**:
@@ -283,8 +309,10 @@ Several utility tools are available in the `tools` directory to assist with vari
   python3 tools/train_yolo/yolov11_train.py
   ```
   - Output: Trained YOLO model (`best.pt`).
+  - After obtaining the `best.pt` model, rename it to `surgical_tools_detection_model.pt` and move it to `models/pretrained/Surgical_Tools_Detection_Yolov11_Model`.
 
-#### 4. **YOLO Testing**
+
+#### 5. **YOLO Testing**
 - **Testing Script**: `tools/train_yolo/yolov11_test.py`
 - **Description**: Tests the YOLO model on the input video and exports a video with bounding boxes.
 - **Setup**:

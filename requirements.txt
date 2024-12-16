@@ -13,6 +13,8 @@ optuna>=4.1.0
 
 # Dehaze
 numba>=0.60.0
+opencv-contrib-python>=4.10.0
+
 
 # SAM2 -> manual installation
 
