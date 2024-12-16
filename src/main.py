@@ -6,6 +6,7 @@ import cv2
 import shutil
 import numpy as np
 from pathlib import Path
+import re
 import subprocess
 from stages.detection.surgical_tools_detection_stage import SurgicalToolsDetectionStage
 from stages.dehaze.dehaze_video import DehazeStage
@@ -460,7 +461,7 @@ def main():
         depth_input_dir = os.path.join(gaussian_input_dir, "depth")
         images_input_dir = os.path.join(gaussian_input_dir, "images")
         poses_bounds_path = os.path.join(gaussian_input_dir, "poses_bounds.npy")
-
+        points_3D_path = os.path.join(gaussian_input_dir, "points3D.ply")
         # Function to remove existing directories and files
         def remove_existing_dirs_and_file():
             if os.path.exists(depth_input_dir):
@@ -472,6 +473,9 @@ def main():
             if os.path.exists(poses_bounds_path):
                 os.remove(poses_bounds_path)
                 print(f"Deleted file: {poses_bounds_path}")
+            if os.path.exists(points_3D_path):
+                os.remove(points_3D_path)
+                print(f"Deleted file: {points_3D_path}")
 
         # Remove existing directories and files
         remove_existing_dirs_and_file()
@@ -537,6 +541,16 @@ def main():
             arguments_gaussian = os.path.join(PROJECT_ROOT, f"config/gaussian_stage/{args.config_gaussian}")
             if not os.path.exists(arguments_gaussian):
                 raise Exception(f"Configuration file not found: {arguments_gaussian}")
+
+            # Read and modify the configuration file
+            with open(arguments_gaussian, 'r') as f:
+                config_content = f.read()
+
+            # Replace the frame_nums line with the current frame_count value
+            config_content = re.sub(r'^(?:\s*)frame_nums\s*=\s*\d+,', f'    frame_nums={frame_count},', config_content, flags=re.MULTILINE)
+
+            with open(arguments_gaussian, 'w') as f:
+                f.write(config_content)
 
             # Get absolute path to SurgicalGaussian directory
             gaussian_dir = os.path.join(PROJECT_ROOT, "third_party/SurgicalGaussian")
