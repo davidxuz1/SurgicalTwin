@@ -53,44 +53,176 @@ class SegmentationStage:
         area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
         return intersection / float(area1 + area2 - intersection)
 
+    def combine_and_reduce_boxes(self, box1, box2, factor=1.05):
+        """
+        Combina dos boxes tomando la unión que los cubra a ambos y luego
+        reduce el tamaño del box resultante por un factor dado.
 
-    def check_forward_consistency(self, frame_boxes, current_frame, lookforward=3):
+        box formato: [x1, y1, x2, y2]
+        factor > 1: el box se vuelve más pequeño
         """
-        Verifica la consistencia de los boxes en los siguientes frames
+        x1_min = min(box1[0], box2[0])
+        y1_min = min(box1[1], box2[1])
+        x2_max = max(box1[2], box2[2])
+        y2_max = max(box1[3], box2[3])
+
+        # Calcular el centro del box combinado
+        center_x = (x1_min + x2_max) / 2.0
+        center_y = (y1_min + y2_max) / 2.0
+
+        width = x2_max - x1_min
+        height = y2_max - y1_min
+
+        # Reducir el tamaño del box
+        new_width = width / factor
+        new_height = height / factor
+
+        new_x1 = int(center_x - new_width / 2)
+        new_y1 = int(center_y - new_height / 2)
+        new_x2 = int(center_x + new_width / 2)
+        new_y2 = int(center_y + new_height / 2)
+
+        return [new_x1, new_y1, new_x2, new_y2]
+
+    def check_forward_consistency(self, frame_boxes, current_frame, lookforward=4):
         """
-        boxes_sequence = []
-        if current_frame in frame_boxes:
-            boxes_sequence.append(frame_boxes[current_frame])
-        else:
+        Verifica la consistencia de los boxes en los siguientes frames.
+        Se consideran 4 frames en total: current_frame, current_frame+1, current_frame+2, current_frame+3.
+        Un box se considera consistente si aparece con IoU > 0.7 en al menos 3 de estos 4 frames.
+
+        Luego, como segundo filtro, si entre los boxes consistentes (ya filtrados) 
+        hay dos con IoU > 0.6, se crea un nuevo box que es la unión de ambos y 
+        luego se reduce su tamaño por un factor de 1.5.
+        """
+        frames_to_check = [current_frame + i for i in range(lookforward)]
+        # Verificar que todos los frames existan, si no devolver None
+        if not all(f in frame_boxes for f in frames_to_check):
             return None
 
-        # Verificar los siguientes frames
-        for frame in range(current_frame + 1, current_frame + lookforward):
-            if frame not in frame_boxes:
-                return None
-            boxes_sequence.append(frame_boxes[frame])
+        # Obtener la lista de boxes para cada frame
+        boxes_sequence = [frame_boxes[f] for f in frames_to_check]
 
-        if len(boxes_sequence) < lookforward:
-            return None
-
-        # Verificar consistencia usando IoU
+        # Queremos encontrar boxes que se correspondan a la misma "instancia" a lo largo de los frames
+        # y que aparezcan en al menos 3 de estos 4 frames.
         consistent_boxes = []
-        for box in boxes_sequence[0]:
-            is_consistent = True
-            for frame_boxes in boxes_sequence[1:]:
-                found_match = False
-                for current_box in frame_boxes:
-                    if self.calculate_iou(box, current_box) > 0.7:
-                        found_match = True
+
+        # Combinar todos los boxes en una sola lista con referencia a qué frame pertenecen
+        all_boxes_with_frame = []
+        for i, boxes in enumerate(boxes_sequence):
+            for box in boxes:
+                all_boxes_with_frame.append((i, box))  # i = 0..3
+
+        used = [False] * len(all_boxes_with_frame)
+
+        # Primer filtrado: encontrar clusters con IoU > 0.7 en al menos 3 de 4 frames
+        for idx, (f_idx, box) in enumerate(all_boxes_with_frame):
+            if used[idx]:
+                continue
+
+            cluster_boxes = [(f_idx, box)]
+            used[idx] = True
+
+            # Buscar boxes similares
+            for jdx, (other_f_idx, other_box) in enumerate(all_boxes_with_frame):
+                if used[jdx]:
+                    continue
+                for (_, c_box) in cluster_boxes:
+                    if self.calculate_iou(c_box, other_box) > 0.7:
+                        cluster_boxes.append((other_f_idx, other_box))
+                        used[jdx] = True
                         break
-                if not found_match:
-                    is_consistent = False
-                    break
-            if is_consistent:
-                consistent_boxes.append(box)
+
+            distinct_frames = set([c[0] for c in cluster_boxes])
+            if len(distinct_frames) >= 3:
+                cluster_boxes_sorted = sorted(cluster_boxes, key=lambda x: x[0])
+                representative_box = cluster_boxes_sorted[0][1]
+                if representative_box not in consistent_boxes:
+                    consistent_boxes.append(representative_box)
+
+        if not consistent_boxes:
+            return None
+
+        # Segundo filtrado: entre los consistent_boxes, si IoU > 0.2, combinar y reducir
+        merged = True
+        while merged and len(consistent_boxes) > 1:
+            merged = False
+            new_consistent_boxes = []
+            used_indices = set()
+
+            for i in range(len(consistent_boxes)):
+                if i in used_indices:
+                    continue
+                box_a = consistent_boxes[i]
+                merged_with_some = False
+                for j in range(i+1, len(consistent_boxes)):
+                    if j in used_indices:
+                        continue
+                    box_b = consistent_boxes[j]
+                    iou = self.calculate_iou(box_a, box_b)
+                    print(f"IoU between {box_a} and {box_b}: {iou}")
+                    if iou > 0.2:
+                        combined_box = self.combine_and_reduce_boxes(box_a, box_b, factor=1.05)
+                        new_consistent_boxes.append(combined_box)
+                        used_indices.add(i)
+                        used_indices.add(j)
+                        merged = True
+                        merged_with_some = True
+                        break
+                if not merged_with_some and i not in used_indices:
+                    new_consistent_boxes.append(box_a)
+            
+            consistent_boxes = new_consistent_boxes
 
         return consistent_boxes if consistent_boxes else None
 
+    def check_forward_consistency_2(self, frame_boxes, current_frame, lookforward=4):
+        """
+        Verifica la consistencia de los boxes en los siguientes frames.
+        Se consideran 4 frames en total: current_frame, current_frame+1, current_frame+2, current_frame+3.
+        Un box se considera consistente si aparece con IoU > 0.7 en al menos 3 de los 4 frames.
+
+        Devuelve una lista de boxes consistentes o None si no encuentra ninguno.
+        """
+        frames_to_check = [current_frame + i for i in range(lookforward)]
+        # Verificar que todos los frames existan, si no devolver None
+        if not all(f in frame_boxes for f in frames_to_check):
+            return None
+
+        # Obtener la lista de boxes para cada frame
+        boxes_sequence = [frame_boxes[f] for f in frames_to_check]
+
+        consistent_boxes = []
+        all_boxes_with_frame = []
+        for i, boxes in enumerate(boxes_sequence):
+            for box in boxes:
+                all_boxes_with_frame.append((i, box))
+
+        used = [False] * len(all_boxes_with_frame)
+
+        for idx, (f_idx, box) in enumerate(all_boxes_with_frame):
+            if used[idx]:
+                continue
+
+            cluster_boxes = [(f_idx, box)]
+            used[idx] = True
+
+            for jdx, (other_f_idx, other_box) in enumerate(all_boxes_with_frame):
+                if used[jdx]:
+                    continue
+                for (_, c_box) in cluster_boxes:
+                    if self.calculate_iou(c_box, other_box) > 0.7:
+                        cluster_boxes.append((other_f_idx, other_box))
+                        used[jdx] = True
+                        break
+
+            distinct_frames = set([c[0] for c in cluster_boxes])
+            if len(distinct_frames) >= 3:
+                cluster_boxes_sorted = sorted(cluster_boxes, key=lambda x: x[0])
+                representative_box = cluster_boxes_sorted[0][1]
+                if representative_box not in consistent_boxes:
+                    consistent_boxes.append(representative_box)
+
+        return consistent_boxes if consistent_boxes else None
 
     def process(self, video_input, bbox_file, output_path):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -137,7 +269,7 @@ class SegmentationStage:
                 while batch_start < total_frames:
                     batch_frame_num = batch_start + 1
 
-                    # Verificar consistencia hacia adelante
+                    # Verificar consistencia hacia adelante con segundo filtro
                     forward_consistent_boxes = self.check_forward_consistency(frame_boxes, batch_frame_num)
                     
                     if forward_consistent_boxes:
@@ -222,10 +354,13 @@ class SegmentationStage:
 
                             all_binary_masks.append(combined_mask.astype(np.bool_))
 
-                            if rel_frame_idx == 0 and batch_frame_num in frame_boxes:
-                                for box in frame_boxes[batch_frame_num]:
+                            # Dibujar los bounding boxes finales (initial_boxes) en amarillo
+                            if rel_frame_idx == 0:
+                                for box in initial_boxes:
                                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 255), 2)
-
+                            
+                            # Ajuste opcional de brillo/contraste
+                            frame = cv2.convertScaleAbs(frame, alpha=1.1, beta=10)
                             out.write(frame)
 
                     except RuntimeError as e:
