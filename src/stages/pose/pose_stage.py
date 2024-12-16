@@ -176,18 +176,18 @@ class PoseStage:
         enlarge_seg_masks(save_folder, kernel_size=5 if use_gt_mask else 3)
 
         # Guardar poses_bounds.npy
-        pose_bounds_path = self.save_pose_bounds(scene, save_folder)
+        poses_bounds_path = self.save_poses_bounds(scene, save_folder)
 
         # Mover a output_path si es necesario
-        if os.path.abspath(pose_bounds_path) != os.path.abspath(output_path):
-            shutil.move(pose_bounds_path, output_path)
-            pose_bounds_path = output_path
+        if os.path.abspath(poses_bounds_path) != os.path.abspath(output_path):
+            shutil.move(poses_bounds_path, output_path)
+            poses_bounds_path = output_path
 
         # Borrar frames temporales
         shutil.rmtree(frames_dir)
 
         print(f"Processing completed. Output saved in {save_folder}")
-        return pose_bounds_path
+        return poses_bounds_path
 
     def get_3D_model_from_scene(self, outdir, scene, min_conf_thr=3, as_pointcloud=False,
                                 mask_sky=False, clean_depth=False, transparent_cams=False,
@@ -214,35 +214,53 @@ class PoseStage:
                                            cam_size=cam_size, show_cam=show_cam, silent=True,
                                            save_name=save_name, cam_color=cam_color)
 
-    def save_pose_bounds(self, scene, save_folder):
-        poses = scene.get_im_poses().detach().cpu().numpy()
-        K = scene.get_intrinsics().detach().cpu().numpy()
-        depths = scene.get_depthmaps()
+    def save_poses_bounds(self, scene, save_folder):
+        # Obtener poses de cámara (camera-to-world)
+        poses = scene.get_im_poses().detach().cpu().numpy()  # shape: (N, 4, 4)
 
+        # Obtener intrínsecos
+        K = scene.get_intrinsics().detach().cpu().numpy()  # shape: (N, 3, 3)
+
+        # Obtener profundidades
+        depths = scene.get_depthmaps()
         near_fars = []
         for depth in depths:
-            valid_depth = depth[depth > 0]
-            if len(valid_depth) == 0:
-                near, far = 0.1, 1.0
-            else:
-                near = valid_depth.min().detach().item()
-                far = depth.max().detach().item()
+            near = depth[depth > 0].min().detach().item()
+            far = depth.max().detach().item()
             near_fars.append([near, far])
 
+        # Crear formato LLFF (Nx17)
         llff_poses = []
         for i in range(len(poses)):
-            R = poses[i, :3, :3]
-            t = poses[i, :3, 3:]
-            focal = K[i, 0, 0]
-            height, width = K[i, 0, 0], K[i, 1, 1]
-            pose_mat = np.concatenate([np.concatenate([R, t], axis=1),
-                                       np.array([[height, width, focal]]).T],
-                                      axis=1)
-            llff_pose = np.concatenate([pose_mat.reshape(-1), near_fars[i]])
+            # Extraer rotación y traslación (3x4)
+            R = poses[i, :3, :3]  # Rotación 3x3
+            t = poses[i, :3, 3:]  # Traslación 3x1
+
+            # Obtener altura, ancho y focal length
+            height = K[i, 0, 0]  # Asumiendo que K[0,0] es la focal length
+            width = K[i, 1, 1]
+            focal = K[i, 0, 0]  # Asumiendo focal length igual para x e y
+
+            # Crear matriz de pose LLFF (3x5)
+            pose_mat = np.concatenate([
+                np.concatenate([R, t], axis=1),  # [R|t] (3x4)
+                np.array([[height, width, focal]]).T  # [h,w,f] (3x1)
+            ], axis=1)
+
+            # Aplanar y concatenar con near/far
+            llff_pose = np.concatenate([
+                pose_mat.reshape(-1),  # 15 elementos
+                near_fars[i]           # 2 elementos
+            ])
             llff_poses.append(llff_pose)
 
+        # Apilar todas las poses
         llff_poses = np.stack(llff_poses)
-        np.save(f'{save_folder}/poses_bounds.npy', llff_poses)
-        print(f"Poses and bounds saved to {save_folder}/poses_bounds.npy")
-        return f'{save_folder}/poses_bounds.npy'
 
+        print(f"\nLLFF poses shape: {llff_poses.shape}")  # Debería ser (N, 17)
+
+        # Guardar
+        np.save(f'{save_folder}/poses_bounds.npy', llff_poses)
+        print(f"\nPoses and bounds saved to {save_folder}/poses_bounds.npy")
+        return f'{save_folder}/poses_bounds.npy'
+    
