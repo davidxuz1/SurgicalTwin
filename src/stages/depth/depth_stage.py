@@ -5,6 +5,7 @@ import torch
 import tempfile
 from pathlib import Path
 import sys
+import shutil
 
 # Add Depth-Anything-V2 to Python path
 DEPTH_ANYTHING_PATH = str(Path(__file__).resolve().parent.parent.parent.parent / "third_party" / "Depth-Anything-V2")
@@ -37,8 +38,13 @@ class DepthStage:
         """
         Process video and generate depth maps
         """
-        # Create output directory
+
+        # Check and recreate output directory
+        if os.path.exists(output_dir):
+            print(f"Output directory '{output_dir}' already exists. Deleting and recreating it.")
+            shutil.rmtree(output_dir)
         os.makedirs(output_dir, exist_ok=True)
+
         
         # Create temporary directory for frames
         temp_frames_dir = os.path.join(output_dir, "temporal_frames")
@@ -87,7 +93,6 @@ class DepthStage:
                 print(f"Warning! Depth map {k} has {saved_depth.shape[-1]} channels")
         
         # Clean up temporary directory
-        import shutil
         shutil.rmtree(temp_frames_dir)
         
         return output_dir
