@@ -5,12 +5,11 @@ from numba import jit
 class DehazeParams:
     def __init__(self):
         self.omega = 100    # Intensidad dehaze (50-95 recomendado) - Mayor valor = más eliminación de neblina
-        self.t0 = 58       # Preservación detalles - Mayor valor = más detalles preservados
-        self.radius = 2    # Radio dark channel (3-15) - Mayor valor = más precisión pero más lento
-        self.r = 21        # Kernel gaussiano (3-31, impar) - Mayor valor = más suavizado
-        self.alpha = 181   # Contraste (100-200) - Mayor valor = más contraste
-        self.beta = 10      # Brillo (0-50) - Mayor valor = más brillo
-
+        self.t0 = 86        # Preservación detalles - Mayor valor = más detalles preservados
+        self.radius = 5     # Radio dark channel (3-15) - Mayor valor = más precisión pero más lento
+        self.r = 31         # Kernel gaussiano (3-31, impar) - Mayor valor = más suavizado
+        self.alpha = 97     # Contraste (100-200) - Mayor valor = más contraste
+        self.beta = 11      # Brillo (0-50) - Mayor valor = más brillo
         
     def get_omega(self):
         return self.omega / 100.0
